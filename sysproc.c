@@ -20,10 +20,16 @@ sys_exit(void)
   return 0;  // not reached
 }
 
-int
-sys_wait(void)
-{
-  return wait();
+int sys_wait(void) {
+  struct proc *curproc = myproc();
+  
+  // Allow only init (PID 1) to call wait()
+  if (curproc->pid == 1) {
+      return wait();
+  }
+  
+  // Forbid other processes from waiting (prevents precedence ordering)
+  return -1;
 }
 
 int

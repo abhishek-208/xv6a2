@@ -55,7 +55,10 @@ trap(struct trapframe *tf)
       release(&tickslock);
     }
     lapiceoi();
+    if(myproc() && myproc()->state == RUNNING) 
+      yield();  // Force process to yield and allow preemption
     break;
+
   case T_IRQ0 + IRQ_IDE:
     ideintr();
     lapiceoi();

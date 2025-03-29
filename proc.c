@@ -177,139 +177,150 @@ growproc(int n)
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
-int
-fork(void)
-{
+int fork(void) {
   int i, pid;
   struct proc *np;
   struct proc *curproc = myproc();
 
   // Allocate process.
-  if((np = allocproc()) == 0){
-    return -1;
+  if ((np = allocproc()) == 0) {
+      return -1;
   }
 
-  // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
-    kfree(np->kstack);
-    np->kstack = 0;
-    np->state = UNUSED;
-    return -1;
+  // Copy process state from parent.
+  if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0) {
+      kfree(np->kstack);   // Free kernel stack
+      np->kstack = 0;
+      freevm(np->pgdir);   // Free virtual memory (previously missing)
+      np->pgdir = 0;
+      np->state = UNUSED;
+      return -1;
   }
+
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
 
-  // Clear %eax so that fork returns 0 in the child.
+  // Clear %eax so that fork() returns 0 in the child process.
   np->tf->eax = 0;
 
-  for(i = 0; i < NOFILE; i++)
-    if(curproc->ofile[i])
-      np->ofile[i] = filedup(curproc->ofile[i]);
+  // Duplicate file descriptors safely.
+  for (i = 0; i < NOFILE; i++) {
+      if (curproc->ofile[i]) {
+          np->ofile[i] = filedup(curproc->ofile[i]);
+          if (np->ofile[i] == 0) {  // Handle failure
+              for (int j = 0; j < i; j++) {
+                  fileclose(np->ofile[j]); // Close already duplicated files
+                  np->ofile[j] = 0;
+              }
+              freevm(np->pgdir);
+              kfree(np->kstack);
+              np->kstack = 0;
+              np->state = UNUSED;
+              return -1;
+          }
+      }
+  }
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
   pid = np->pid;
 
+  // Ensure process is marked as RUNNABLE **after everything is initialized**
   acquire(&ptable.lock);
-
   np->state = RUNNABLE;
-
   release(&ptable.lock);
 
   return pid;
 }
 
+
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
 // until its parent calls wait() to find out it exited.
-void
-exit(void)
-{
-  struct proc *curproc = myproc();
-  struct proc *p;
-  int fd;
+void exit(void) {
+  struct proc *p = myproc();
+  struct proc *child;
 
-  if(curproc == initproc)
-    panic("init exiting");
+  if (p == initproc)
+      panic("init exiting");
 
-  // Close all open files.
-  for(fd = 0; fd < NOFILE; fd++){
-    if(curproc->ofile[fd]){
-      fileclose(curproc->ofile[fd]);
-      curproc->ofile[fd] = 0;
-    }
+  // Close all open files
+  for (int i = 0; i < NOFILE; i++) {
+      if (p->ofile[i]) {
+          fileclose(p->ofile[i]);
+          p->ofile[i] = 0;
+      }
   }
 
   begin_op();
-  iput(curproc->cwd);
+  iput(p->cwd);
   end_op();
-  curproc->cwd = 0;
+  p->cwd = 0;
 
   acquire(&ptable.lock);
 
-  // Parent might be sleeping in wait().
-  wakeup1(curproc->parent);
-
-  // Pass abandoned children to init.
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->parent == curproc){
-      p->parent = initproc;
-      if(p->state == ZOMBIE)
-        wakeup1(initproc);
-    }
+  // Reassign orphaned children to init process
+  for (child = ptable.proc; child < &ptable.proc[NPROC]; child++) {
+      if (child->parent == p) {
+          child->parent = initproc;
+          if (child->state == ZOMBIE)
+              wakeup(initproc);
+      }
   }
 
-  // Jump into the scheduler, never to return.
-  curproc->state = ZOMBIE;
+  // Mark process as ZOMBIE (waiting for parent to reap it)
+  p->state = ZOMBIE;
   sched();
   panic("zombie exit");
 }
 
+
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
-int
-wait(void)
-{
+int wait(void) {
   struct proc *p;
   int havekids, pid;
   struct proc *curproc = myproc();
   
   acquire(&ptable.lock);
-  for(;;){
-    // Scan through table looking for exited children.
+  for (;;) {
     havekids = 0;
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc)
+    
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if (p->parent != curproc)
         continue;
       havekids = 1;
-      if(p->state == ZOMBIE){
-        // Found one.
+      
+      if (p->state == ZOMBIE) {
+        // Found a zombie process, clean it up
         pid = p->pid;
-        kfree(p->kstack);
+        kfree(p->kstack);  // Free kernel stack
         p->kstack = 0;
-        freevm(p->pgdir);
-        p->pid = 0;
-        p->parent = 0;
-        p->name[0] = 0;
+        freevm(p->pgdir);  // Free user memory
+        
+        // Reset process metadata
+        safestrcpy(p->name, "", sizeof(p->name));
         p->killed = 0;
-        p->state = UNUSED;
+        p->state = UNUSED; // Mark process slot as free
+        
         release(&ptable.lock);
         return pid;
       }
     }
 
-    // No point waiting if we don't have any children.
-    if(!havekids || curproc->killed){
+    // If no children exist or parent was killed, return -1
+    if (!havekids || curproc->killed) {
       release(&ptable.lock);
       return -1;
     }
 
-    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
-    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+    // Wait for children to exit
+    sleep(curproc, &ptable.lock);
   }
 }
+
 
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
@@ -333,6 +344,13 @@ scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if (p->state == ZOMBIE) {
+        // Free process resources
+        kfree(p->kstack);
+        p->kstack = 0;
+        freevm(p->pgdir);
+        p->state = UNUSED;
+      }
       if(p->state != RUNNABLE)
         continue;
 
@@ -425,31 +443,32 @@ sleep(void *chan, struct spinlock *lk)
   if(lk == 0)
     panic("sleep without lk");
 
-  // Must acquire ptable.lock in order to
-  // change p->state and then call sched.
-  // Once we hold ptable.lock, we can be
-  // guaranteed that we won't miss any wakeup
-  // (wakeup runs with ptable.lock locked),
-  // so it's okay to release lk.
-  if(lk != &ptable.lock){  //DOC: sleeplock0
-    acquire(&ptable.lock);  //DOC: sleeplock1
+  // Prevent process from sleeping if it's still RUNNABLE
+  if (p->state == RUNNABLE) {
+    return;
+  }
+
+  // Acquire ptable.lock if necessary
+  if(lk != &ptable.lock){
+    acquire(&ptable.lock);
     release(lk);
   }
-  // Go to sleep.
-  p->chan = chan;
-  p->state = SLEEPING;
 
-  sched();
+  // Go to sleep only if the process is not runnable
+  if (p->state != RUNNABLE) {
+    p->chan = chan;
+    p->state = SLEEPING;
+    sched();
+    p->chan = 0;
+  }
 
-  // Tidy up.
-  p->chan = 0;
-
-  // Reacquire original lock.
-  if(lk != &ptable.lock){  //DOC: sleeplock2
+  // Reacquire original lock
+  if(lk != &ptable.lock){
     release(&ptable.lock);
     acquire(lk);
   }
 }
+
 
 //PAGEBREAK!
 // Wake up all processes sleeping on chan.
