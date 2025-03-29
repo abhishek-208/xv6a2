@@ -20,3 +20,6 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+#define SYS_custom_fork  23
+#define SYS_scheduler_start 24
+

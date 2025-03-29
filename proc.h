@@ -1,3 +1,6 @@
+#include "spinlock.h"
+struct proc* allocproc(void);
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -12,6 +15,8 @@ struct cpu {
 
 extern struct cpu cpus[NCPU];
 extern int ncpu;
+
+
 
 //PAGEBREAK: 17
 // Saved registers for kernel context switches.
@@ -49,8 +54,17 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int start_later;            // 1 if the process should not start immediately
+  int exec_time;              // Execution time (ticks), -1 for indefinite execution
+  int elapsed_ticks;          // Count of elapsed execution ticks
 };
 
+struct ptable_struct {
+  struct spinlock lock;
+  struct proc proc[NPROC];
+};
+
+extern struct ptable_struct ptable;
 // Process memory is laid out contiguously, low addresses first:
 //   text
 //   original data and bss

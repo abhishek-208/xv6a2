@@ -7,10 +7,8 @@
 #include "proc.h"
 #include "spinlock.h"
 
-struct {
-  struct spinlock lock;
-  struct proc proc[NPROC];
-} ptable;
+struct ptable_struct ptable;
+
 
 static struct proc *initproc;
 
@@ -70,8 +68,7 @@ myproc(void) {
 // If found, change state to EMBRYO and initialize
 // state required to run in the kernel.
 // Otherwise return 0.
-static struct proc*
-allocproc(void)
+struct proc* allocproc(void)
 {
   struct proc *p;
   char *sp;
@@ -344,6 +341,7 @@ scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+
       if (p->state == ZOMBIE) {
         // Free process resources
         kfree(p->kstack);
@@ -351,6 +349,7 @@ scheduler(void)
         freevm(p->pgdir);
         p->state = UNUSED;
       }
+
       if(p->state != RUNNABLE)
         continue;
 
@@ -367,6 +366,17 @@ scheduler(void)
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+
+      // Increment execution time if process has a time limit
+      if (p->exec_time > 0) {
+        p->elapsed_ticks++;
+        if (p->elapsed_ticks >= p->exec_time) {
+          // Process exceeded its allowed time; terminate it
+          p->state = ZOMBIE;
+          p->elapsed_ticks = 0;
+          wakeup1(p->parent);
+        }
+      }
     }
     release(&ptable.lock);
 
