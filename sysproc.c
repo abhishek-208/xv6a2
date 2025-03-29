@@ -43,24 +43,26 @@ int sys_custom_fork(void) {
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
+  // Store custom parameters
   np->start_later = start_later_flag;
   np->exec_time = exec_time;
   np->elapsed_ticks = 0;
 
   int pid = np->pid;
 
-  acquire(&ptable.lock);
+  acquire(&ptable.lock);  // Lock before modifying process state
 
   if (start_later_flag) {
-    np->state = SLEEPING; // Put process to sleep until sys_scheduler_start()
+    np->state = SLEEPING; // Ensure it does not run until scheduler_start() is called
   } else {
-    np->state = RUNNABLE; // Start immediately like normal fork
+    np->state = RUNNABLE; // Immediately available to the scheduler
   }
 
-  release(&ptable.lock);
+  release(&ptable.lock);  // Unlock after modifying process state
 
   return pid;
 }
+
 
 
 int
@@ -155,7 +157,8 @@ sys_uptime(void)
 int sys_scheduler_start(void) {
   struct proc *p;
   
-  acquire(&ptable.lock);
+  pushcli();  // Disable interrupts to prevent deadlocks
+  acquire(&ptable.lock);  
 
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
     if (p->start_later && p->state == SLEEPING) {
@@ -165,5 +168,9 @@ int sys_scheduler_start(void) {
   }
 
   release(&ptable.lock);
+  popcli();   // Restore interrupts
+
   return 0;
 }
+
+
