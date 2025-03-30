@@ -18,7 +18,7 @@ int sys_custom_fork(void) {
 
   struct proc *np;
   struct proc *curproc = myproc();
-
+  
   // Allocate process
   if ((np = allocproc()) == 0)
     return -1;
@@ -65,10 +65,9 @@ int sys_custom_fork(void) {
 
 
 
-int
-sys_fork(void)
+int sys_fork(void)
 {
-  return fork();
+  return fork();  // Default fork behavior
 }
 
 int
@@ -80,11 +79,16 @@ sys_exit(void)
 
 int sys_wait(void) {
   struct proc *curproc = myproc();
-  
-  // Allow only init (PID 1) to call wait()
-  if (curproc->pid == 1) {
+
+  // Allow only processes that are NOT background tasks to call wait()
+  if (curproc->start_later == 0) {
       return wait();
   }
+
+  // For background processes, return immediately (no waiting)
+  return -1;
+
+
   
   // Forbid other processes from waiting (prevents precedence ordering)
   return -1;
