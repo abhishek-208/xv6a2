@@ -18,7 +18,7 @@ int sys_custom_fork(void) {
 
   struct proc *np;
   struct proc *curproc = myproc();
-
+  
   // Allocate process
   if ((np = allocproc()) == 0)
     return -1;
@@ -65,10 +65,9 @@ int sys_custom_fork(void) {
 
 
 
-int
-sys_fork(void)
+int sys_fork(void)
 {
-  return fork();
+  return fork();  // Default fork behavior
 }
 
 int

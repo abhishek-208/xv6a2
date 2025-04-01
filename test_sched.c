@@ -6,6 +6,7 @@
 
 int main() 
 {
+    printf(1, "Starting test_sched\n");
     for (int i = 0; i < NUM_PROCS; i++) {
     int pid = custom_fork(1, 50); // Start later, execution time 50
     if (pid < 0) {
@@ -24,15 +25,18 @@ int main()
     }
 }
 
-printf(1, "All child processes created with start_later flag set.\n");
-sleep(400);
-printf(1, "Calling sys_scheduler_start() to allow execution.\n");
-scheduler_start();
+    printf(1, "All child processes created with start_later flag set.\n");
+    sleep(400);
+    printf(1, "Calling sys_scheduler_start() to allow execution.\n");
+    scheduler_start();
 
-for (int i = 0; i < NUM_PROCS; i++) {
-wait();
-}
+    for (int i = 0; i < NUM_PROCS; i++) 
+    {
+        wait();
+    }
 
-printf(1, "All child processes completed.\n");
-exit();
+    printf(1, "All child processes completed.\n");
+    // Explicit sleep to ensure zombie processes are reaped before exiting
+    sleep(50);
+    exit();
 }
