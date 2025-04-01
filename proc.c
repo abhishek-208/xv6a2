@@ -119,9 +119,10 @@ userinit(void)
 {
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
-
   p = allocproc();
-  
+
+  p->exec_time = -1;  // Ensure init runs indefinitely
+
   initproc = p;
   if((p->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
@@ -201,6 +202,11 @@ int fork(void) {
   // Clear %eax so that fork() returns 0 in the child process.
   np->tf->eax = 0;
 
+  // Copy custom scheduling fields
+  np->start_later = curproc->start_later;     
+  np->exec_time = curproc->exec_time;         
+  np->elapsed_ticks = curproc->elapsed_ticks;
+
   // Duplicate file descriptors safely.
   for (i = 0; i < NOFILE; i++) {
       if (curproc->ofile[i]) {
@@ -257,6 +263,8 @@ void exit(void) {
   p->cwd = 0;
 
   acquire(&ptable.lock);
+
+  wakeup1(p->parent);
 
   // Reassign orphaned children to init process
   for (child = ptable.proc; child < &ptable.proc[NPROC]; child++) {
@@ -341,14 +349,6 @@ scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-
-      if (p->state == ZOMBIE) {
-        // Free process resources
-        kfree(p->kstack);
-        p->kstack = 0;
-        freevm(p->pgdir);
-        p->state = UNUSED;
-      }
 
       if(p->state != RUNNABLE)
         continue;
@@ -453,24 +453,19 @@ sleep(void *chan, struct spinlock *lk)
   if(lk == 0)
     panic("sleep without lk");
 
-  // Prevent process from sleeping if it's still RUNNABLE
-  if (p->state == RUNNABLE) {
-    return;
-  }
-
   // Acquire ptable.lock if necessary
   if(lk != &ptable.lock){
     acquire(&ptable.lock);
     release(lk);
   }
 
-  // Go to sleep only if the process is not runnable
-  if (p->state != RUNNABLE) {
-    p->chan = chan;
-    p->state = SLEEPING;
-    sched();
-    p->chan = 0;
-  }
+  // Go to sleep
+  p->chan = chan;
+  p->state = SLEEPING;
+  sched();
+
+  // Cleanup after waking up
+  p->chan = 0;
 
   // Reacquire original lock
   if(lk != &ptable.lock){

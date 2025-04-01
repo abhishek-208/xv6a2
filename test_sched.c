@@ -15,8 +15,10 @@ int main()
 
     else if (pid == 0) 
     {
+    //acquire(&cons.lock);  // Add lock
     // Child process
     printf(1, "Child %d (PID: %d) started but should not run yet.\n", i, getpid());
+    //release(&cons.lock);  // Release lock
     for (volatile int j = 0; j < 100000000; j++); // Simulated work
     exit();
     }

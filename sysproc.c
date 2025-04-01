@@ -79,15 +79,7 @@ sys_exit(void)
 }
 
 int sys_wait(void) {
-  struct proc *curproc = myproc();
-  
-  // Allow only init (PID 1) to call wait()
-  if (curproc->pid == 1) {
-      return wait();
-  }
-  
-  // Forbid other processes from waiting (prevents precedence ordering)
-  return -1;
+  return wait();
 }
 
 int
@@ -156,8 +148,7 @@ sys_uptime(void)
 
 int sys_scheduler_start(void) {
   struct proc *p;
-  
-  pushcli();  // Disable interrupts to prevent deadlocks
+
   acquire(&ptable.lock);  
 
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
@@ -168,7 +159,6 @@ int sys_scheduler_start(void) {
   }
 
   release(&ptable.lock);
-  popcli();   // Restore interrupts
 
   return 0;
 }

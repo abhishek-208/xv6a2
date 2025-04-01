@@ -55,6 +55,16 @@ trap(struct trapframe *tf)
       release(&tickslock);
     }
     lapiceoi();
+
+    // Handle exec_time termination
+    struct proc* p = myproc();
+    if(p && p->state == RUNNING && p->exec_time != -1) {
+      p->elapsed_ticks++;
+      if(p->elapsed_ticks >= p->exec_time) {
+        exit();
+      }
+    }
+
     if(myproc() && myproc()->state == RUNNING) 
       yield();  // Force process to yield and allow preemption
     break;
@@ -97,19 +107,16 @@ trap(struct trapframe *tf)
     myproc()->killed = 1;
   }
 
-  // Force process exit if it has been killed and is in user space.
-  // (If it is still executing in the kernel, let it keep running
-  // until it gets to the regular system call return.)
+  // Force process exit if killed and in user space
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 
-  // Force process to give up CPU on clock tick.
-  // If interrupts were on while locks held, would need to check nlock.
+  // Force process to yield on clock tick (redundant safety)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER)
     yield();
 
-  // Check if the process has been killed since we yielded
+  // Final check for killed processes
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 }
