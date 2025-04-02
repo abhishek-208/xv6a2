@@ -24,13 +24,14 @@ int sys_profile_test(void) {
 
 int sys_custom_fork(void) {
   int start_later_flag, exec_time;
-  
+  cprintf("Inside custom fork\n");
+
   if (argint(0, &start_later_flag) < 0 || argint(1, &exec_time) < 0)
     return -1;
 
   struct proc *np;
   struct proc *curproc = myproc();
-  
+
   // Allocate process
   if ((np = allocproc()) == 0)
     return -1;
@@ -55,25 +56,27 @@ int sys_custom_fork(void) {
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
-  // Store custom parameters
-  np->start_later = start_later_flag;
-  np->exec_time = exec_time;
-  np->elapsed_ticks = 0;
-
-  int pid = np->pid;
-
   acquire(&ptable.lock);  // Lock before modifying process state
 
   if (start_later_flag) {
-    np->state = SLEEPING; // Ensure it does not run until scheduler_start() is called
+    np->state = SLEEPING;
+    np->start_later = 1;
   } else {
-    np->state = RUNNABLE; // Immediately available to the scheduler
+    np->state = RUNNABLE;
+    np->start_later = 0;
+    np->last_runnable_time = ticks;  // Track waiting from creation
   }
+
+  // Store custom parameters
+  np->exec_time = exec_time;
+  np->elapsed_ticks = 0;
+  np->creation_time = ticks;  // Track when the process was created
 
   release(&ptable.lock);  // Unlock after modifying process state
 
-  return pid;
+  return np->pid;
 }
+
 
 
 
@@ -157,15 +160,22 @@ sys_uptime(void)
   return xticks;
 }
 
+
 int sys_scheduler_start(void) {
   struct proc *p;
+  cprintf("Running custom scheduler\n");
 
-  acquire(&ptable.lock);  
+  acquire(&ptable.lock);
 
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
     if (p->start_later && p->state == SLEEPING) {
       p->state = RUNNABLE;
-      p->start_later = 0; // Reset flag
+      p->start_later = 0;  // Reset flag
+      p->last_runnable_time = ticks;  // Start waiting time tracking
+
+      // **Reset priority boosting parameters**
+      p->priority = PRIORITY_INIT;  // Reset priority
+      p->boosted = 0;  // Reset priority boost flag
     }
   }
 
@@ -173,5 +183,7 @@ int sys_scheduler_start(void) {
 
   return 0;
 }
+
+
 
 

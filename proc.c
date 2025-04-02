@@ -82,15 +82,14 @@ struct proc* myproc(void) {
 // If found, change state to EMBRYO and initialize
 // state required to run in the kernel.
 // Otherwise return 0.
-struct proc* allocproc(void)
-{
+struct proc* allocproc(void) {
   struct proc *p;
   char *sp;
 
   acquire(&ptable.lock);
 
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == UNUSED)
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    if (p->state == UNUSED)
       goto found;
 
   release(&ptable.lock);
@@ -106,10 +105,20 @@ found:
   p->context_switches = 0;
   p->is_first_run = 1;
 
+  // Initialize scheduling metrics
+  p->initial_priority = PRIORITY_INIT; // From Makefile
+  p->cpu_ticks = 0;
+  p->waiting_time = 0;
+  p->last_runnable_time = 0;
+
+  // **Initialize priority boosting fields**
+  p->priority = PRIORITY_INIT;  // Default priority (lower is better)
+  p->boosted = 0;               // No boost at start
+
   release(&ptable.lock);
 
   // Allocate kernel stack.
-  if((p->kstack = kalloc()) == 0){
+  if ((p->kstack = kalloc()) == 0) {
     p->state = UNUSED;
     return 0;
   }
@@ -129,12 +138,9 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
-
- 
-
-
   return p;
 }
+
 
 //PAGEBREAK: 32
 // Set up first user process.
@@ -257,6 +263,7 @@ int fork(void) {
   // Ensure process is marked as RUNNABLE **after everything is initialized**
   acquire(&ptable.lock);
   np->state = RUNNABLE;
+  np->last_runnable_time = ticks;
   release(&ptable.lock);
 
   return pid;
@@ -394,54 +401,79 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct proc *highest_pri_proc;
   struct cpu *c = mycpu();
+  int max_priority, current_pri;
+  int selected_pid;
+
   c->proc = 0;
   
   for(;;){
-    // Enable interrupts on this processor.
     sti();
-
-    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+
+    // Update waiting time for all RUNNABLE processes
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if(p->state == RUNNABLE) {
+        p->total_wait_time += ticks - p->last_runnable_time;
+        p->last_runnable_time = ticks;
+      }
+    }
+
+    // Find highest priority process
+    highest_pri_proc = 0;
+    max_priority = -1;
+    selected_pid = -1;
+
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       if(p->state != RUNNABLE)
         continue;
 
-      // Calculate waiting time: time spent in RUNNABLE state
-      p->total_wait_time += (ticks - p->last_runnable_time);
+      // Calculate current priority using formula
+      current_pri = p->initial_priority 
+                   - ALPHA * p->cpu_ticks 
+                   + BETA * p->total_wait_time;
 
-      // Track first execution time
-      if(p->is_first_run) {
-        p->first_run_time = ticks;
-        p->is_first_run = 0;
+      // Select process with highest priority (lowest PID on tie)
+      if((current_pri > max_priority) || 
+         (current_pri == max_priority && p->pid < selected_pid)) {
+        max_priority = current_pri;
+        highest_pri_proc = p;
+        selected_pid = p->pid;
+      }
+    }
+
+    if(highest_pri_proc != 0) {
+      // Track first run time
+      if(highest_pri_proc->is_first_run) {
+        highest_pri_proc->first_run_time = ticks;
+        highest_pri_proc->is_first_run = 0;
       }
 
-      // Switch to chosen process
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
-      p->context_switches++;  // Count context switch IN
+      // Switch to selected process
+      c->proc = highest_pri_proc;
+      switchuvm(highest_pri_proc);
+      highest_pri_proc->state = RUNNING;
+      highest_pri_proc->context_switches++;
 
-      // Actual context switch
-      swtch(&(c->scheduler), p->context);
+      // Perform context switch
+      swtch(&(c->scheduler), highest_pri_proc->context);
       switchkvm();
 
-      // Process has yielded or terminated
-      c->proc = 0;
-
-      // Update last_runnable_time when process leaves CPU
-      if(p->state == RUNNABLE) {
-        p->last_runnable_time = ticks;
+      // Update last runnable time if still runnable
+      if(highest_pri_proc->state == RUNNABLE) {
+        highest_pri_proc->last_runnable_time = ticks;
       }
 
       // Handle exec_time termination
-      if(p->exec_time > 0 && p->state != ZOMBIE) {
-        p->elapsed_ticks++;
-        if(p->elapsed_ticks >= p->exec_time) {
-          p->killed = 1;
-        }
+      if(highest_pri_proc->exec_time > 0 && 
+         highest_pri_proc->elapsed_ticks++ >= highest_pri_proc->exec_time) {
+        highest_pri_proc->killed = 1;
       }
+
+      c->proc = 0;
     }
+
     release(&ptable.lock);
   }
 }
@@ -476,10 +508,17 @@ sched(void)
 void
 yield(void)
 {
-  acquire(&ptable.lock);  //DOC: yieldlock
-  myproc()->context_switches++;
-  myproc()->state = RUNNABLE;
-  sched();
+  struct proc *p = myproc();
+  
+  acquire(&ptable.lock);
+  
+  // Update scheduling metrics before yielding
+  p->context_switches++;          // Track context switch
+  p->state = RUNNABLE;            // Change state
+  p->last_runnable_time = ticks;  // Reset waiting timer
+  
+  sched();                        // Enter scheduler
+  
   release(&ptable.lock);
 }
 
@@ -552,9 +591,13 @@ wakeup1(void *chan)
 {
   struct proc *p;
 
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if(p->state == SLEEPING && p->chan == chan) {
+      // Wake up the process and update scheduling metrics
       p->state = RUNNABLE;
+      p->last_runnable_time = ticks;  // Track when it becomes runnable
+    }
+  }
 }
 
 // Wake up all processes sleeping on chan.
