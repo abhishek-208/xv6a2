@@ -9,6 +9,18 @@
 extern struct proc* allocproc(void);
 
 
+int sys_profile_test(void) {
+  int pid = fork();
+  if(pid == 0) {
+    // Child process does work
+    for(int i=0; i<1000000; i++);
+    exit();
+  } else if (pid>0) {
+    wait();
+  }
+  return 0;
+}
+
 
 int sys_custom_fork(void) {
   int start_later_flag, exec_time;

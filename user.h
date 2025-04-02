@@ -25,7 +25,7 @@ int sleep(int);
 int uptime(void);
 int custom_fork(int start_later_flag, int exec_time);
 int scheduler_start(void);
-
+int profile_test(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

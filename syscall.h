@@ -22,4 +22,5 @@
 #define SYS_close  21
 #define SYS_custom_fork  22
 #define SYS_scheduler_start 23
+#define SYS_profile_test 24
 

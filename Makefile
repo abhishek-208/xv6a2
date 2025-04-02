@@ -183,6 +183,7 @@ UPROGS=\
 	_zombie\
 	_test_exit\
 	_test_sched\
+	_test_profiler\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

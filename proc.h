@@ -57,6 +57,13 @@ struct proc {
   int start_later;            // 1 if the process should not start immediately
   int exec_time;              // Execution time (ticks), -1 for indefinite execution
   int elapsed_ticks;          // Count of elapsed execution ticks
+  int creation_time;      // When process was created (ticks)
+  int exit_time;          // When process exited (ticks)
+  int first_run_time;     // When process first ran (ticks)
+  int total_wait_time;    // Cumulative time in RUNNABLE state
+  int last_runnable_time; // Last time it entered RUNNABLE state
+  int context_switches;   // Number of times scheduled in/out
+  int is_first_run;       // Flag for first execution
 };
 
 struct ptable_struct {

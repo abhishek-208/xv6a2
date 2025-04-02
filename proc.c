@@ -6,6 +6,21 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#define MAX_PROFILER_ENTRIES 64
+
+struct profiler_entry {
+  int pid;
+  int tat;
+  int wt;
+  int rt;
+  int cs;
+};
+
+struct profiler_entry prof_data[MAX_PROFILER_ENTRIES];
+
+int prof_index = 0;
+
+
 
 struct ptable_struct ptable;
 
@@ -52,8 +67,7 @@ mycpu(void)
 
 // Disable interrupts so that we are not rescheduled
 // while reading proc from the cpu structure
-struct proc*
-myproc(void) {
+struct proc* myproc(void) {
   struct cpu *c;
   struct proc *p;
   pushcli();
@@ -86,6 +100,12 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
 
+  p->creation_time = ticks;      // Global timer
+  p->first_run_time = -1;        // Not yet run
+  p->total_wait_time = 0;
+  p->context_switches = 0;
+  p->is_first_run = 1;
+
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -108,6 +128,10 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+
+
+ 
+
 
   return p;
 }
@@ -245,6 +269,23 @@ int fork(void) {
 void exit(void) {
   struct proc *p = myproc();
   struct proc *child;
+  p->exit_time = ticks;
+
+  // Compute metrics
+  int tat = p->exit_time - p->creation_time;
+  int wt = p->total_wait_time;
+  int rt = p->first_run_time - p->creation_time;
+  int cs = p->context_switches;
+
+  // Store in profiler data
+  if(prof_index < MAX_PROFILER_ENTRIES) {
+    prof_data[prof_index].pid = p->pid;
+    prof_data[prof_index].tat = tat;
+    prof_data[prof_index].wt = wt;
+    prof_data[prof_index].rt = rt;
+    prof_data[prof_index].cs = cs;
+    prof_index++;
+  }
 
   if (p == initproc)
       panic("init exiting");
@@ -298,9 +339,23 @@ int wait(void) {
         continue;
       havekids = 1;
       
-      if (p->state == ZOMBIE) {
-        // Found a zombie process, clean it up
+      if(p->parent != curproc || p->state != ZOMBIE) 
+        continue;
+
+      // Print profiler data
+      
+
+      if (p->state == ZOMBIE) {   // Found a zombie process, clean it up
         pid = p->pid;
+        for(int i = 0; i < prof_index; i++) {
+          if(prof_data[i].pid == pid) {
+            cprintf("PID: %d\nTAT: %d\nWT: %d\nRT: %d\n#CS: %d\n",
+                   prof_data[i].pid, prof_data[i].tat, 
+                   prof_data[i].wt, prof_data[i].rt, prof_data[i].cs);
+            break;
+          }
+        }
+
         kfree(p->kstack);  // Free kernel stack
         p->kstack = 0;
         freevm(p->pgdir);  // Free user memory
@@ -349,37 +404,45 @@ scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-
       if(p->state != RUNNABLE)
         continue;
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+      // Calculate waiting time: time spent in RUNNABLE state
+      p->total_wait_time += (ticks - p->last_runnable_time);
+
+      // Track first execution time
+      if(p->is_first_run) {
+        p->first_run_time = ticks;
+        p->is_first_run = 0;
+      }
+
+      // Switch to chosen process
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
+      p->context_switches++;  // Count context switch IN
 
+      // Actual context switch
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
+      // Process has yielded or terminated
       c->proc = 0;
 
-      // Increment execution time if process has a time limit
-      if (p->exec_time > 0) {
+      // Update last_runnable_time when process leaves CPU
+      if(p->state == RUNNABLE) {
+        p->last_runnable_time = ticks;
+      }
+
+      // Handle exec_time termination
+      if(p->exec_time > 0 && p->state != ZOMBIE) {
         p->elapsed_ticks++;
-        if (p->elapsed_ticks >= p->exec_time) {
-          // Process exceeded its allowed time; terminate it
-          p->state = ZOMBIE;
-          p->elapsed_ticks = 0;
-          wakeup1(p->parent);
+        if(p->elapsed_ticks >= p->exec_time) {
+          p->killed = 1;
         }
       }
     }
     release(&ptable.lock);
-
   }
 }
 
@@ -414,6 +477,7 @@ void
 yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
+  myproc()->context_switches++;
   myproc()->state = RUNNABLE;
   sched();
   release(&ptable.lock);
@@ -471,6 +535,11 @@ sleep(void *chan, struct spinlock *lk)
   if(lk != &ptable.lock){
     release(&ptable.lock);
     acquire(lk);
+  }
+
+  // When process leaves RUNNABLE (in scheduler())
+  if(p->state == RUNNABLE) {
+    p->total_wait_time += (ticks - p->last_runnable_time);
   }
 }
 
