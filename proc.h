@@ -64,10 +64,13 @@ struct proc {
   int last_runnable_time; // Last time it entered RUNNABLE state
   int context_switches;   // Number of times scheduled in/out
   int is_first_run;       // Flag for first execution
+
   int initial_priority;  // Initial priority (π_i(0))
   int cpu_ticks;         // Total CPU ticks consumed (C_i(t))
   int waiting_time;      // Total waiting time (W_i(t))
   int priority;      // Dynamic priority (lower is higher priority)
+  int last_scheduled_time;  // Time when last scheduled
+  
   int boosted;       // Flag to indicate if priority was boosted
 
 };

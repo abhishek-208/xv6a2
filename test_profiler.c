@@ -4,7 +4,7 @@
 int main() {
     printf(1, "Testing scheduler profiler with custom fork...\n");
 
-    int pid = custom_fork(1, -1); // Start later, run indefinitely
+    int pid = custom_fork(1, 10); // Start later, run indefinitely
     if (pid < 0) {
         printf(1, "Custom fork failed!\n");
         exit();
