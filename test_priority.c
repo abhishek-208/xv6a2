@@ -39,7 +39,7 @@ int main() {
     printf(1, "\nStarting priority scheduler test with custom fork...\n");
 
     for (int i = 0; i < 3; i++) {
-        pid[i] = custom_fork(1, -1); // Start later
+        pid[i] = fork(); // Start later
         if (pid[i] < 0) {
             printf(1, "Custom fork failed for process %d!\n", i);
             exit();

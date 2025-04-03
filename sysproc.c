@@ -24,7 +24,7 @@ int sys_profile_test(void) {
 
 int sys_custom_fork(void) {
   int start_later_flag, exec_time;
-  cprintf("inside custom for");
+  cprintf("inside custom fork\n");
   if (argint(0, &start_later_flag) < 0 || argint(1, &exec_time) < 0)
     return -1;
 

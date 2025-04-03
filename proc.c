@@ -110,7 +110,7 @@ found:
   p->priority = PRIORITY_INIT;  // Start with initial priority
   p->cpu_ticks = 0;  // No CPU usage at start
   p->waiting_time = 0;  // No waiting time at start
-  p->last_scheduled_time = ticks;  // Initialize scheduling reference
+  p->last_runnable_time = ticks;  // Initialize scheduling reference
 
   release(&ptable.lock);
 
@@ -278,7 +278,8 @@ void exit(void) {
 
   // Compute metrics
   int tat = p->exit_time - p->creation_time;
-  int wt = p->total_wait_time;
+  int burst_time = p->cpu_ticks;  // Total CPU execution time
+  int wt = tat - burst_time;  // Waiting Time (WT)
   int rt = p->first_run_time - p->creation_time;
   int cs = p->context_switches;
 
@@ -413,8 +414,9 @@ void scheduler(void) {
     // Update waiting time for all RUNNABLE processes
     for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       if (p->state == RUNNABLE) {
-        p->waiting_time = ticks - p->last_scheduled_time;
+        p->waiting_time += (ticks - p->last_runnable_time);  
       }
+      p->last_runnable_time = ticks;  // Ensure waiting time updates correctly
     }
 
     // Find the process with the highest priority
@@ -451,20 +453,15 @@ void scheduler(void) {
       highest_pri_proc->state = RUNNING;
       highest_pri_proc->context_switches++;
 
-      // Update scheduling reference
-      highest_pri_proc->last_scheduled_time = ticks;
-
       // Perform context switch
       swtch(&(c->scheduler), highest_pri_proc->context);
       switchkvm();
 
-      // If still runnable, update last runnable time
-      if (highest_pri_proc->state == RUNNABLE) {
-        highest_pri_proc->last_scheduled_time = ticks;
+      // **Update CPU usage only if process actually ran**
+      if (highest_pri_proc->state == RUNNING) {
+        highest_pri_proc->cpu_ticks++;
+        highest_pri_proc->last_scheduled_time = ticks; // Only update if it ran
       }
-
-      // Update CPU usage ticks for running process
-      highest_pri_proc->cpu_ticks++;
 
       // Handle process termination if execution time is exceeded
       if (highest_pri_proc->exec_time > 0 && 
@@ -478,6 +475,7 @@ void scheduler(void) {
     release(&ptable.lock);
   }
 }
+
 
 
 // Enter scheduler.  Must hold only ptable.lock
@@ -507,22 +505,21 @@ sched(void)
 }
 
 // Give up the CPU for one scheduling round.
-void
-yield(void)
-{
+void yield(void) {
   struct proc *p = myproc();
-  
+
   acquire(&ptable.lock);
-  
+
   // Update scheduling metrics before yielding
-  p->context_switches++;          // Track context switch
-  p->state = RUNNABLE;            // Change state
-  p->last_runnable_time = ticks;  // Reset waiting timer
-  
-  sched();                        // Enter scheduler
-  
+  p->context_switches++;          
+  p->state = RUNNABLE;            
+  p->last_runnable_time = ticks;  // **Fix: Track correct waiting time**
+
+  sched();                        
+
   release(&ptable.lock);
 }
+
 
 // A fork child's very first scheduling by scheduler()
 // will swtch here.  "Return" to user space.
@@ -547,60 +544,56 @@ forkret(void)
 
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
-void
-sleep(void *chan, struct spinlock *lk)
-{
+void sleep(void *chan, struct spinlock *lk) {
   struct proc *p = myproc();
-  
-  if(p == 0)
+  if (p == 0)
     panic("sleep");
-
-  if(lk == 0)
+  if (lk == 0)
     panic("sleep without lk");
 
-  // Acquire ptable.lock if necessary
-  if(lk != &ptable.lock){
+  if (lk != &ptable.lock) {
     acquire(&ptable.lock);
     release(lk);
   }
 
-  // Go to sleep
+  // Update waiting time before going to sleep
+  if (p->state == RUNNABLE) {
+    p->waiting_time += (ticks - p->last_runnable_time);
+  }
+
   p->chan = chan;
   p->state = SLEEPING;
   sched();
 
-  // Cleanup after waking up
   p->chan = 0;
 
-  // Reacquire original lock
-  if(lk != &ptable.lock){
+  if (lk != &ptable.lock) {
     release(&ptable.lock);
     acquire(lk);
   }
 
-  // When process leaves RUNNABLE (in scheduler())
-  if(p->state == RUNNABLE) {
-    p->total_wait_time += (ticks - p->last_runnable_time);
+  if (p->state == RUNNABLE) {
+    p->last_runnable_time = ticks;
   }
 }
+
 
 
 //PAGEBREAK!
 // Wake up all processes sleeping on chan.
 // The ptable lock must be held.
-static void
-wakeup1(void *chan)
-{
+static void wakeup1(void *chan) {
   struct proc *p;
 
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-    if(p->state == SLEEPING && p->chan == chan) {
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state == SLEEPING && p->chan == chan) {
       // Wake up the process and update scheduling metrics
       p->state = RUNNABLE;
-      p->last_runnable_time = ticks;  // Track when it becomes runnable
+      p->last_runnable_time = ticks;  // **Ensure correct waiting time tracking**
     }
   }
 }
+
 
 // Wake up all processes sleeping on chan.
 void
