@@ -7,20 +7,20 @@
 int main() 
 {
     for (int i = 0; i < NUM_PROCS; i++) {
-    int pid = custom_fork(1, 50); // Start later, execution time 50
-    if (pid < 0) {
-    printf(1, "Failed to fork process %d\n", i);
-    exit();
-    } 
+        int pid = custom_fork(1, 50); // Start later, execution time 50
+        if (pid < 0) {
+        printf(1, "Failed to fork process %d\n", i);
+        exit();
+     } 
 
     else if (pid == 0) 
     {
-    //acquire(&cons.lock);  // Add lock
-    // Child process
-    printf(1, "Child %d (PID: %d) started but should not run yet.\n", i, getpid());
-    //release(&cons.lock);  // Release lock
-    for (volatile int j = 0; j < 100000000; j++); // Simulated work
-    exit();
+    
+        // Child process
+        printf(1, "\nChild %d (PID: %d) started but should not run yet.\n", i, getpid());
+        
+        for (volatile int j = 0; j < 100000000; j++); // Simulated work
+        exit();
     }
 }
     sleep(400);
@@ -32,8 +32,8 @@ int main()
         wait();
     }
 
-    printf(1, "All child processes completed.\n");
+    printf(1, "All child processes completed.\n\n");
     // Explicit sleep to ensure zombie processes are reaped before exiting
-    sleep(50);
+    //sleep(50);
     exit();
 }

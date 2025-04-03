@@ -24,8 +24,7 @@ int sys_profile_test(void) {
 
 int sys_custom_fork(void) {
   int start_later_flag, exec_time;
-  cprintf("Inside custom fork\n");
-
+  
   if (argint(0, &start_later_flag) < 0 || argint(1, &exec_time) < 0)
     return -1;
 
@@ -163,7 +162,7 @@ sys_uptime(void)
 
 int sys_scheduler_start(void) {
   struct proc *p;
-  cprintf("Running custom scheduler\n");
+  
 
   acquire(&ptable.lock);
 

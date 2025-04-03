@@ -352,14 +352,16 @@ int wait(void) {
 
       if (p->state == ZOMBIE) {   // Found a zombie process, clean it up
         pid = p->pid;
+        
         for(int i = 0; i < prof_index; i++) {
           if(prof_data[i].pid == pid) {
-            cprintf("PID: %d\nTAT: %d\nWT: %d\nRT: %d\n#CS: %d\n",
+            cprintf("PID: %d\nTAT: %d\nWT: %d\nRT: %d\n#CS: %d\n\n\n",
                    prof_data[i].pid, prof_data[i].tat, 
                    prof_data[i].wt, prof_data[i].rt, prof_data[i].cs);
             break;
           }
         }
+        
 
         kfree(p->kstack);  // Free kernel stack
         p->kstack = 0;
