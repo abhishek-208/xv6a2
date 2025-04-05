@@ -7,6 +7,7 @@
 int main() 
 {
     for (int i = 0; i < NUM_PROCS; i++) {
+        
         int pid = custom_fork(1, 50); // Start later, execution time 50
         if (pid < 0) {
         printf(1, "Failed to fork process %d\n", i);
@@ -17,16 +18,25 @@ int main()
     {
     
         // Child process
-        printf(1, "\nChild %d (PID: %d) started but should not run yet.\n", i, getpid());
+        
+        printf(1, "Child %d (PID: %d) started but should not run yet.\n", i, getpid());
         
         for (volatile int j = 0; j < 100000000; j++); // Simulated work
+        
+        printf(1, "Child %d (PID: %d) exiting.\n", i, getpid());
+            
         exit();
     }
 }
+    
+    printf(1, "All child processes created with start_later flag set.\n");
     sleep(400);
     
+    printf(1, "Calling sys_scheduler_start() to allow execution.\n");
     scheduler_start();
+    sleep(10);
 
+    // Wait for children to finish
     for (int i = 0; i < NUM_PROCS; i++) 
     {
         wait();

@@ -391,14 +391,16 @@ int wait(void) {
 
 
 //PAGEBREAK: 42
-// Per-CPU process scheduler.
+// Per-CPU process .
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
 //  - choose a process to run
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
-void scheduler(void) {
+void
+scheduler(void)
+{
   struct proc *p;
   struct proc *highest_pri_proc;
   struct cpu *c = mycpu();
@@ -406,48 +408,50 @@ void scheduler(void) {
   int selected_pid;
 
   c->proc = 0;
-
-  for (;;) {
+  
+  for(;;){
     sti();
     acquire(&ptable.lock);
 
     // Update waiting time for all RUNNABLE processes
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-      if (p->state == RUNNABLE) {
-        p->waiting_time += (ticks - p->last_runnable_time);  
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if(p->state == RUNNABLE) {
+        p->total_wait_time += ticks - p->last_runnable_time;
+        p->last_runnable_time = ticks;
       }
-      p->last_runnable_time = ticks;  // Ensure waiting time updates correctly
     }
 
-    // Find the process with the highest priority
+    // Find highest priority process
     highest_pri_proc = 0;
     max_priority = -1;
     selected_pid = -1;
 
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-      if (p->state != RUNNABLE)
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if(p->state != RUNNABLE)
         continue;
 
-      // Calculate dynamic priority π_i(t)
-      current_pri = p->initial_priority - (ALPHA * p->cpu_ticks) + (BETA * p->waiting_time);
+      // Calculate current priority using formula
+      current_pri = p->initial_priority 
+                   - ALPHA * p->cpu_ticks 
+                   + BETA * p->total_wait_time;
 
-      // Select process with the highest priority (break ties using the lowest PID)
-      if ((current_pri > max_priority) || 
-          (current_pri == max_priority && p->pid < selected_pid)) {
+      // Select process with highest priority (lowest PID on tie)
+      if((current_pri > max_priority) || 
+         (current_pri == max_priority && p->pid < selected_pid)) {
         max_priority = current_pri;
         highest_pri_proc = p;
         selected_pid = p->pid;
       }
     }
 
-    if (highest_pri_proc != 0) {
-      // If first run, track the first run time
-      if (highest_pri_proc->is_first_run) {
+    if(highest_pri_proc != 0) {
+      // Track first run time
+      if(highest_pri_proc->is_first_run) {
         highest_pri_proc->first_run_time = ticks;
         highest_pri_proc->is_first_run = 0;
       }
 
-      // Switch to the selected process
+      // Switch to selected process
       c->proc = highest_pri_proc;
       switchuvm(highest_pri_proc);
       highest_pri_proc->state = RUNNING;
@@ -457,15 +461,14 @@ void scheduler(void) {
       swtch(&(c->scheduler), highest_pri_proc->context);
       switchkvm();
 
-      // **Update CPU usage only if process actually ran**
-      if (highest_pri_proc->state == RUNNING) {
-        highest_pri_proc->cpu_ticks++;
-        highest_pri_proc->last_scheduled_time = ticks; // Only update if it ran
+      // Update last runnable time if still runnable
+      if(highest_pri_proc->state == RUNNABLE) {
+        highest_pri_proc->last_runnable_time = ticks;
       }
 
-      // Handle process termination if execution time is exceeded
-      if (highest_pri_proc->exec_time > 0 && 
-          highest_pri_proc->elapsed_ticks++ >= highest_pri_proc->exec_time) {
+      // Handle exec_time termination
+      if(highest_pri_proc->exec_time > 0 && 
+         highest_pri_proc->elapsed_ticks++ >= highest_pri_proc->exec_time) {
         highest_pri_proc->killed = 1;
       }
 
