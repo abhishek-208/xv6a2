@@ -356,7 +356,7 @@ int wait(void) {
         
         for(int i = 0; i < prof_index; i++) {
           if(prof_data[i].pid == pid) {
-            cprintf("PID: %d\nTAT: %d\nWT: %d\nRT: %d\n#CS: %d\n\n\n",
+            cprintf("\nPID: %d\nTAT: %d\nWT: %d\nRT: %d\n#CS: %d\n",
                    prof_data[i].pid, prof_data[i].tat, 
                    prof_data[i].wt, prof_data[i].rt, prof_data[i].cs);
             break;

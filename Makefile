@@ -82,7 +82,7 @@ ALPHA = 1            # Weight for CPU time penalty
 BETA = 2             # Weight for waiting time boost
 
 
-CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -Wno-error=infinite-recursion -fno-omit-frame-pointer \
+CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32  -fno-omit-frame-pointer \
          -DPRIORITY_INIT=$(PRIORITY_INIT) -DALPHA=$(ALPHA) -DBETA=$(BETA)
 		 
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
