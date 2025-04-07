@@ -9,6 +9,7 @@
 extern struct proc* allocproc(void);
 
 
+
 int sys_profile_test(void) {
   int pid = fork();
   if(pid == 0) {
@@ -24,58 +25,158 @@ int sys_profile_test(void) {
 
 int sys_custom_fork(void) {
   int start_later_flag, exec_time;
-  
+
   if (argint(0, &start_later_flag) < 0 || argint(1, &exec_time) < 0)
     return -1;
+
+  // Allow exec_time = -1 (run indefinitely), but not < -1
+  if (exec_time < -1) {
+    cprintf("custom_fork failed: invalid exec_time = %d\n", exec_time);
+    return -1;
+  }
 
   struct proc *np;
   struct proc *curproc = myproc();
 
-  // Allocate process
-  if ((np = allocproc()) == 0)
-    return -1;
+  // Shortcut: behave exactly like fork if exec_time == -1 and start_later_flag == 0
+  if (exec_time == -1 && start_later_flag == 0) {
+    if ((np = allocproc()) == 0)
+       return -1;
+    
+    if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0) {
+      kfree(np->kstack);
+      np->kstack = 0;
+      np->state = UNUSED;
+      return -1;
+    }
 
-  // Copy process state from parent
+    np->sz = curproc->sz;
+    np->parent = curproc;
+    *np->tf = *curproc->tf;
+    np->tf->eax = 0;
+
+    for (int i = 0; i < NOFILE; i++)
+      if (curproc->ofile[i])
+        np->ofile[i] = filedup(curproc->ofile[i]);
+
+    np->cwd = idup(curproc->cwd);
+    safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+    acquire(&ptable.lock);
+
+    np->state = RUNNABLE;
+    np->start_later = 0;
+    np->exec_time = -1;
+    np->is_exec_limited = 0;
+    np->elapsed_ticks = 0;
+    np->creation_time = ticks;
+    np->last_runnable_time = ticks;
+
+    // Init scheduler metrics
+    np->first_run_time = -1;
+    np->exit_time = -1;
+    np->total_wait_time = 0;
+    np->context_switches = 0;
+    np->is_first_run = 1;
+
+    // Inherit priority and CPU-related stats
+    np->initial_priority = curproc->initial_priority;
+    np->priority = curproc->priority;
+    np->cpu_ticks = 0;
+    np->waiting_time = 0;
+    np->last_scheduled_time = 0;
+    np->boosted = 0;
+
+    release(&ptable.lock);
+    return np->pid;
+  }
+
+  // Otherwise, behave like custom fork
+  if ((np = allocproc()) == 0) {
+    cprintf("custom_fork failed: allocproc returned 0\n");
+    return -1;
+  }
+
   if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0) {
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
+    cprintf("custom_fork: copyuvm failed.\n");
     return -1;
   }
 
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
-  np->tf->eax = 0; // Return 0 to child
+  np->tf->eax = 0;
 
   for (int i = 0; i < NOFILE; i++)
     if (curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
-  np->cwd = idup(curproc->cwd);
 
+  np->cwd = idup(curproc->cwd);
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
-  acquire(&ptable.lock);  // Lock before modifying process state
+  acquire(&ptable.lock);
 
+  // Scheduler behavior control
   if (start_later_flag) {
     np->state = SLEEPING;
     np->start_later = 1;
   } else {
     np->state = RUNNABLE;
     np->start_later = 0;
-    np->last_runnable_time = ticks;  // Track waiting from creation
+    np->last_runnable_time = ticks;
   }
 
-  // Store custom parameters
+  // Exec time tracking
   np->exec_time = exec_time;
+  np->is_exec_limited = (exec_time != -1);
   np->elapsed_ticks = 0;
-  np->creation_time = ticks;  // Track when the process was created
+  np->creation_time = ticks;
 
-  release(&ptable.lock);  // Unlock after modifying process state
+  // Scheduler stats init
+  np->first_run_time = -1;
+  np->exit_time = -1;
+  np->total_wait_time = 0;
+  np->context_switches = 0;
+  np->is_first_run = 1;
 
+  // Priority scheduling fields
+  np->initial_priority = curproc->initial_priority;
+  np->priority = curproc->priority;
+  np->cpu_ticks = 0;
+  np->waiting_time = 0;
+  np->last_scheduled_time = 0;
+  np->boosted = 0;
+
+  release(&ptable.lock);
   return np->pid;
 }
 
+int sys_scheduler_start(void) {
+  struct proc *p;
+
+  acquire(&ptable.lock);
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->start_later && p->state == SLEEPING) {
+      p->state = RUNNABLE;
+      p->start_later = 0;  // Reset flag
+      p->last_runnable_time = ticks;  // Start waiting time tracking
+
+      // Optional: Reset priority boost parameters
+      p->priority = PRIORITY_INIT;  // Reset to base priority
+      p->boosted = 0;               // Reset priority boost flag (if used)
+    }
+  }
+
+  scheduler_started = 1;  // Set global flag to allow exec_limited processes
+
+  release(&ptable.lock);
+
+  return 0;
+}
 
 
 
@@ -160,28 +261,6 @@ sys_uptime(void)
 }
 
 
-int sys_scheduler_start(void) {
-  struct proc *p;
-  
-  
-  acquire(&ptable.lock);
-
-  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-    if (p->start_later && p->state == SLEEPING) {
-      p->state = RUNNABLE;
-      p->start_later = 0;  // Reset flag
-      p->last_runnable_time = ticks;  // Start waiting time tracking
-
-      // **Reset priority boosting parameters**
-      p->priority = PRIORITY_INIT;  // Reset priority
-      p->boosted = 0;  // Reset priority boost flag
-    }
-  }
-
-  release(&ptable.lock);
-
-  return 0;
-}
 
 
 

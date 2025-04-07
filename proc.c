@@ -23,6 +23,7 @@ int prof_index = 0;
 
 
 struct ptable_struct ptable;
+int scheduler_started = 0; // Global variable to track scheduler start for limited processes
 
 
 static struct proc *initproc;
@@ -93,6 +94,7 @@ struct proc* allocproc(void) {
       goto found;
 
   release(&ptable.lock);
+  cprintf("allocproc: No available process slots. All %d slots used.\n", NPROC);
   return 0;
 
 found:
@@ -111,6 +113,7 @@ found:
   p->cpu_ticks = 0;  // No CPU usage at start
   p->waiting_time = 0;  // No waiting time at start
   p->last_runnable_time = ticks;  // Initialize scheduling reference
+  p->is_exec_limited = 0;
 
   release(&ptable.lock);
 
@@ -352,8 +355,7 @@ int wait(void) {
       
 
       if (p->state == ZOMBIE) {   // Found a zombie process, clean it up
-        pid = p->pid;
-        
+        pid = p->pid;        
         for(int i = 0; i < prof_index; i++) {
           if(prof_data[i].pid == pid) {
             cprintf("\nPID: %d\nTAT: %d\nWT: %d\nRT: %d\n#CS: %d\n",
@@ -398,6 +400,7 @@ int wait(void) {
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
 void
 scheduler(void)
 {
@@ -428,6 +431,10 @@ scheduler(void)
 
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       if(p->state != RUNNABLE)
+        continue;
+
+      // Skip delayed processes (custom_fork with is_exec_limited == 1)
+      if(p->is_exec_limited && !scheduler_started)
         continue;
 
       // Calculate current priority using formula
@@ -478,6 +485,7 @@ scheduler(void)
     release(&ptable.lock);
   }
 }
+
 
 
 

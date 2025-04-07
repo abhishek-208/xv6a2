@@ -35,7 +35,6 @@ void write_msg(const char* label, int i, int pid) {
     itoa(i, idx_buf);
     itoa(pid, pid_buf);
 
-    // Build the message: "Child i (PID: pid) <label>\n"
     const char* prefix = "Child ";
     for (int j = 0; prefix[j]; j++) buf[p++] = prefix[j];
     for (int j = 0; idx_buf[j]; j++) buf[p++] = idx_buf[j];
@@ -46,40 +45,47 @@ void write_msg(const char* label, int i, int pid) {
     for (int j = 0; suffix[j]; j++) buf[p++] = suffix[j];
     for (int j = 0; label[j]; j++) buf[p++] = label[j];
     buf[p++] = '\n';
+
     write(1, buf, p);
 }
 
 int main() {
+    int pids[NUM_PROCS];
+
+    printf(1, "All child processes created with start_later flag set.\n");
+
     for (int i = 0; i < NUM_PROCS; i++) {
-        
-        int pid = custom_fork(1, 200); // Start later, exec time 50
+        int pid = custom_fork(1, -1);  
 
         if (pid < 0) {
             printf(1, "Failed to fork process %d\n", i);
             exit();
         } else if (pid == 0) {
             // Child process
-            sleep(2);
+            sleep(2);  // Let the message appear after scheduler_start()
             write_msg("started but should not run yet.", i, getpid());
-
-           // for (volatile int j = 0; j < 100000000; j++); // Simulated work
-            sleep(5);
-
+            sleep(5);  // Simulate some work
             write_msg("exiting.", i, getpid());
             exit();
         }
+
+        // Parent process
+        pids[i] = pid;
     }
 
-    printf(1, "All child processes created with start_later flag set.\n");
-    printf(1, "Calling sys_scheduler_start() to allow execution.\n");
+    sleep(10);  // Give time to ensure all children are blocked
 
+    printf(1, "Calling sys_scheduler_start() to allow execution.\n");
     scheduler_start();
 
     for (int i = 0; i < NUM_PROCS; i++) {
-        wait();
+        int waited_pid = wait();
+        if (waited_pid < 0) {
+            printf(1, "Child %d (PID: %d) failed during wait()\n", i, pids[i]);
+        }
     }
 
     printf(1, "All child processes completed.\n\n");
-    sleep(50);
+    sleep(50);  // Let final stats print out
     exit();
 }

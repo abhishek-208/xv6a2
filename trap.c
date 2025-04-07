@@ -47,23 +47,27 @@ void trap(struct trapframe *tf) {
       }
       lapiceoi();
 
-      // Handle priority scheduler metrics
       struct proc* p = myproc();
-      if(p && p->state == RUNNING) {
-        // Update CPU time tracking
-        p->cpu_ticks++;  // Critical for priority calculation
-        
-        // Handle exec_time termination
-        if(p->exec_time != -1) {
+      if (p && p->state == RUNNING) {
+        // Update priority scheduler metrics
+        p->cpu_ticks++;
+
+        // Print once if the process is indefinite
+        if (p->is_exec_limited && p->exec_time == -1 && p->is_first_run) {
+          cprintf("Process %d ('%s') is running indefinitely.\n", p->pid, p->name);
+          p->is_first_run = 0;
+        }
+
+        // Handle exec_time-limited processes
+        if (p->is_exec_limited && p->exec_time != -1) {
           p->elapsed_ticks++;
-          if(p->elapsed_ticks >= p->exec_time) {
-            exit();
+          if (p->elapsed_ticks >= p->exec_time) {
+            cprintf("Process %d exceeded exec time. Exiting...\n", p->pid);
+            p->killed = 1;
           }
         }
       }
 
-      if(p && p->state == RUNNING) 
-        yield();  // Force preemption
       break;
 
     case T_IRQ0 + IRQ_IDE:
@@ -89,10 +93,12 @@ void trap(struct trapframe *tf) {
 
     default:
       if(myproc() == 0 || (tf->cs&3) == 0){
+        // Kernel trap with no process or in kernel mode
         cprintf("unexpected trap %d from cpu %d eip %x (cr2=0x%x)\n",
                 tf->trapno, cpuid(), tf->eip, rcr2());
         panic("trap");
       }
+      // User trap: kill the process
       cprintf("pid %d %s: trap %d err %d on cpu %d "
               "eip 0x%x addr 0x%x--kill proc\n",
               myproc()->pid, myproc()->name, tf->trapno,
@@ -100,13 +106,16 @@ void trap(struct trapframe *tf) {
       myproc()->killed = 1;
   }
 
+  // Exit if process was marked killed (from any trap)
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 
+  // Yield only once after timer interrupt (handled above)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER)
     yield();
 
+  // Final kill check in case we yielded back
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 }

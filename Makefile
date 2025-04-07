@@ -193,6 +193,7 @@ UPROGS=\
 	_test_sched\
 	_test_profiler\
 	_test_priority\
+	
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

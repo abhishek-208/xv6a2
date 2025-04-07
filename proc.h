@@ -15,7 +15,7 @@ struct cpu {
 
 extern struct cpu cpus[NCPU];
 extern int ncpu;
-
+extern int scheduler_started;
 
 
 //PAGEBREAK: 17
@@ -72,6 +72,11 @@ struct proc {
   int last_scheduled_time;  // Time when last scheduled
   
   int boosted;       // Flag to indicate if priority was boosted
+
+  int is_exec_limited;   // 1 if exec_ticks is set (>=0), 0 otherwise
+
+
+  
 
 };
 
