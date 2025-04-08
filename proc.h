@@ -75,6 +75,8 @@ struct proc {
 
   int is_exec_limited;   // 1 if exec_ticks is set (>=0), 0 otherwise
 
+  int is_custom_fork;
+
 
   
 

@@ -6,19 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
-#define MAX_PROFILER_ENTRIES 64
 
-struct profiler_entry {
-  int pid;
-  int tat;
-  int wt;
-  int rt;
-  int cs;
-};
-
-struct profiler_entry prof_data[MAX_PROFILER_ENTRIES];
-
-int prof_index = 0;
 
 
 
@@ -277,25 +265,7 @@ int fork(void) {
 void exit(void) {
   struct proc *p = myproc();
   struct proc *child;
-  p->exit_time = ticks;
-
-  // Compute metrics
-  int tat = p->exit_time - p->creation_time;
-  int burst_time = p->cpu_ticks;  // Total CPU execution time
-  int wt = tat - burst_time;  // Waiting Time (WT)
-  int rt = p->first_run_time - p->creation_time;
-  int cs = p->context_switches;
-
-  // Store in profiler data
-  if(prof_index < MAX_PROFILER_ENTRIES) {
-    prof_data[prof_index].pid = p->pid;
-    prof_data[prof_index].tat = tat;
-    prof_data[prof_index].wt = wt;
-    prof_data[prof_index].rt = rt;
-    prof_data[prof_index].cs = cs;
-    prof_index++;
-  }
-
+  
   if (p == initproc)
       panic("init exiting");
 
@@ -314,6 +284,25 @@ void exit(void) {
 
   acquire(&ptable.lock);
 
+  // *Capture End Time*
+  p->exit_time = ticks;//this is i am trying to check again
+ // cprintf("Printing the end time %d\n",curproc->end_time);
+
+  // Compute metrics
+  int tat = p->exit_time - p->creation_time;
+  int burst_time = p->cpu_ticks;  // Total CPU execution time
+  int wt = tat - burst_time;  // Waiting Time (WT)
+  int rt = p->first_run_time - p->creation_time;
+  int cs = p->context_switches;
+  
+  
+  //*Print Process Scheduling Metrics*
+  cprintf("PID: %d\n", p->pid);
+  cprintf("TAT: %d\n", tat);
+  cprintf("WT: %d\n", wt);
+  cprintf("RT: %d\n", rt);
+  cprintf("#CS: %d\n",cs);
+
   wakeup1(p->parent);
 
   // Reassign orphaned children to init process
@@ -327,6 +316,7 @@ void exit(void) {
 
   // Mark process as ZOMBIE (waiting for parent to reap it)
   p->state = ZOMBIE;
+  
   sched();
   panic("zombie exit");
 }
@@ -356,16 +346,7 @@ int wait(void) {
 
       if (p->state == ZOMBIE) {   // Found a zombie process, clean it up
         pid = p->pid;        
-        for(int i = 0; i < prof_index; i++) {
-          if(prof_data[i].pid == pid) {
-            cprintf("\nPID: %d\nTAT: %d\nWT: %d\nRT: %d\n#CS: %d\n",
-                   prof_data[i].pid, prof_data[i].tat, 
-                   prof_data[i].wt, prof_data[i].rt, prof_data[i].cs);
-            break;
-          }
-        }
         
-
         kfree(p->kstack);  // Free kernel stack
         p->kstack = 0;
         freevm(p->pgdir);  // Free user memory
@@ -406,12 +387,14 @@ scheduler(void)
 {
   struct proc *p;
   struct proc *highest_pri_proc;
+  
   struct cpu *c = mycpu();
+  
   int max_priority, current_pri;
   int selected_pid;
-
-  c->proc = 0;
   
+  c->proc = 0;
+  cprintf("hello this is scheduler\n");
   for(;;){
     sti();
     acquire(&ptable.lock);

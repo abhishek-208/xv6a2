@@ -22,137 +22,65 @@ int sys_profile_test(void) {
   return 0;
 }
 
-
-int sys_custom_fork(void) {
-  int start_later_flag, exec_time;
-
-  if (argint(0, &start_later_flag) < 0 || argint(1, &exec_time) < 0)
-    return -1;
-
-  // Allow exec_time = -1 (run indefinitely), but not < -1
-  if (exec_time < -1) {
-    cprintf("custom_fork failed: invalid exec_time = %d\n", exec_time);
-    return -1;
+int
+sys_custom_fork(int start_later, int exec_time)
+{
+  // If normal behavior is expected, fall back to fork()
+  if (start_later == 0 && exec_time == -1) {
+    return fork();  // behave exactly like normal fork
   }
 
+  int i, pid;
   struct proc *np;
   struct proc *curproc = myproc();
 
-  // Shortcut: behave exactly like fork if exec_time == -1 and start_later_flag == 0
-  if (exec_time == -1 && start_later_flag == 0) {
-    if ((np = allocproc()) == 0)
-       return -1;
-    
-    if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0) {
-      kfree(np->kstack);
-      np->kstack = 0;
-      np->state = UNUSED;
-      return -1;
-    }
-
-    np->sz = curproc->sz;
-    np->parent = curproc;
-    *np->tf = *curproc->tf;
-    np->tf->eax = 0;
-
-    for (int i = 0; i < NOFILE; i++)
-      if (curproc->ofile[i])
-        np->ofile[i] = filedup(curproc->ofile[i]);
-
-    np->cwd = idup(curproc->cwd);
-    safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-
-    acquire(&ptable.lock);
-
-    np->state = RUNNABLE;
-    np->start_later = 0;
-    np->exec_time = -1;
-    np->is_exec_limited = 0;
-    np->elapsed_ticks = 0;
-    np->creation_time = ticks;
-    np->last_runnable_time = ticks;
-
-    // Init scheduler metrics
-    np->first_run_time = -1;
-    np->exit_time = -1;
-    np->total_wait_time = 0;
-    np->context_switches = 0;
-    np->is_first_run = 1;
-
-    // Inherit priority and CPU-related stats
-    np->initial_priority = curproc->initial_priority;
-    np->priority = curproc->priority;
-    np->cpu_ticks = 0;
-    np->waiting_time = 0;
-    np->last_scheduled_time = 0;
-    np->boosted = 0;
-
-    release(&ptable.lock);
-    return np->pid;
-  }
-
-  // Otherwise, behave like custom fork
-  if ((np = allocproc()) == 0) {
-    cprintf("custom_fork failed: allocproc returned 0\n");
+  // Allocate process.
+  if((np = allocproc()) == 0)
     return -1;
-  }
 
-  if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0) {
-    kfree(np->kstack);
-    np->kstack = 0;
+  // Copy process state from current process.
+  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
     np->state = UNUSED;
-    cprintf("custom_fork: copyuvm failed.\n");
     return -1;
   }
-
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+
+  // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
 
-  for (int i = 0; i < NOFILE; i++)
-    if (curproc->ofile[i])
+  // Copy open files and current working directory.
+  for(i = 0; i < NOFILE; i++)
+    if(curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
-
   np->cwd = idup(curproc->cwd);
-  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
-  acquire(&ptable.lock);
-
-  // Scheduler behavior control
-  if (start_later_flag) {
-    np->state = SLEEPING;
-    np->start_later = 1;
-  } else {
-    np->state = RUNNABLE;
-    np->start_later = 0;
-    np->last_runnable_time = ticks;
-  }
-
-  // Exec time tracking
+  // Set the new fields.
+  np->start_later = start_later;
   np->exec_time = exec_time;
-  np->is_exec_limited = (exec_time != -1);
-  np->elapsed_ticks = 0;
-  np->creation_time = ticks;
+  
 
-  // Scheduler stats init
-  np->first_run_time = -1;
-  np->exit_time = -1;
-  np->total_wait_time = 0;
-  np->context_switches = 0;
-  np->is_first_run = 1;
+  // Mark as custom-forked process
+  np->is_custom_fork = 1;
 
-  // Priority scheduling fields
-  np->initial_priority = curproc->initial_priority;
-  np->priority = curproc->priority;
-  np->cpu_ticks = 0;
-  np->waiting_time = 0;
-  np->last_scheduled_time = 0;
-  np->boosted = 0;
+  // Decide the initial state.
+  if(start_later)
+    np->state = SLEEPING;
+  else
+    np->state = RUNNABLE;
 
+  pid = np->pid;
+
+  // Add to process table.
+  acquire(&ptable.lock);
+  np->state = (start_later ? SLEEPING : RUNNABLE);
   release(&ptable.lock);
-  return np->pid;
+
+  return pid;
 }
+
+
 
 int sys_scheduler_start(void) {
   struct proc *p;
