@@ -165,8 +165,12 @@ main(void)
       continue;
     }
     if(fork1() == 0)
-      runcmd(parsecmd(buf));
-    wait();
+    {  runcmd(parsecmd(buf));
+     }
+       else {  
+      int wpid = wait();
+      printf(1, "wait() returned %d\n", wpid);
+    }
   }
   exit();
 }

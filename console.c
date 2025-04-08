@@ -15,6 +15,8 @@
 #include "proc.h"
 #include "x86.h"
 
+extern int ctrl_flag;
+
 static void consputc(int);
 
 static int panicked = 0;
@@ -194,6 +196,7 @@ consoleintr(int (*getc)(void))
   int c, doprocdump = 0;
 
   acquire(&cons.lock);
+  
   while((c = getc()) >= 0){
     switch(c){
     case C('P'):  // Process listing.
@@ -213,6 +216,28 @@ consoleintr(int (*getc)(void))
         consputc(BACKSPACE);
       }
       break;
+      
+      
+   //--------------------New Keyboard Inputs-----------------   
+      
+    case C('C'):  // Ctrl+C - Interrupt signal (SIGINT)
+      ctrl_flag = 1;
+      break;
+      
+    case C('B'):  // Ctrl+B - Terminate signal (SIGBG)
+      ctrl_flag = 2;
+      break;
+      
+    case C('F'):  // Ctrl+F - Resume signal (SIGFG)
+      ctrl_flag = 3;
+      break;
+      
+    case C('G'):   // Ctrl+G - Custom Signal Handler (SIGCUSTOM)
+      ctrl_flag = 4;
+      break;
+      
+  //--------------------New Keyboard Inputs-----------------      
+         
     default:
       if(c != 0 && input.e-input.r < INPUT_BUF){
         c = (c == '\r') ? '\n' : c;
@@ -227,9 +252,21 @@ consoleintr(int (*getc)(void))
     }
   }
   release(&cons.lock);
+  
   if(doprocdump) {
     procdump();  // now call procdump() wo. cons.lock held
   }
+  
+//-----------Call control_signal_handler() for new Keyboard Inputs----------- 
+  
+  if(ctrl_flag ==1 || ctrl_flag == 2 || ctrl_flag ==3 || ctrl_flag ==4)
+  {
+  control_signal_handler(ctrl_flag);
+  ctrl_flag=0;
+  }
+  
+//-----------Call control_signal_handler() for new Keyboard Inputs-----------  
+  
 }
 
 int

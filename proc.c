@@ -7,6 +7,12 @@
 #include "proc.h"
 #include "spinlock.h"
 
+
+#define NULL ((void*)0)
+
+
+
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -88,6 +94,8 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->killed=0;  
+  p->suspended=0;
 
   release(&ptable.lock);
 
@@ -111,6 +119,9 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+	
+	
+	//cprintf("allocproc: created process with pid %d, killed = %d suspended = %d\n", p->pid,p->killed, p->suspended);
 
   return p;
 }
@@ -149,7 +160,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
-
+//  cprintf("userinit: created init process with pid %d, state %d\n", p->pid, p->state);
   release(&ptable.lock);
 }
 
@@ -215,11 +226,41 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
-
+  
   release(&ptable.lock);
 
   return pid;
 }
+
+
+// Recursively clean up all zombie children of a process
+void
+zumbo_cleanup(struct proc *parent)
+{
+  struct proc *p;
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->parent == parent) {
+      // First recursively clean this child's children
+      zumbo_cleanup(p);
+
+      // Now clean this process if it's a zombie
+      if (p->killed == 1) {
+        kfree(p->kstack);
+        p->kstack = 0;
+        freevm(p->pgdir);
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->suspended =0;
+        p->state = UNUSED;
+      }
+    }
+  }
+}
+
+
+
 
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
@@ -251,21 +292,29 @@ exit(void)
 
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
+  
+  
+  zumbo_cleanup(curproc);   //clean subtree of process 
 
-  // Pass abandoned children to init.
+  // Pass abandoned children if any to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->parent == curproc){
-      p->parent = initproc;
-      if(p->state == ZOMBIE)
-        wakeup1(initproc);
+    if(p->parent == curproc) //check curproc is parent of someone
+    {
+      	p->parent = initproc;
+      	if(p->state == ZOMBIE)
+        wakeup1(initproc);      
+      	}
+      
+     
     }
-  }
+
 
   // Jump into the scheduler, never to return.
-  curproc->state = ZOMBIE;
+  curproc->state = ZOMBIE;  //mark current process as zombie to be cleaned up in wait()
   sched();
   panic("zombie exit");
 }
+
 
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
@@ -273,20 +322,26 @@ int
 wait(void)
 {
   struct proc *p;
+  struct proc *papa;
   int havekids, pid;
   struct proc *curproc = myproc();
   
   acquire(&ptable.lock);
   for(;;){
-    // Scan through table looking for exited children.
+    // Scan through table looking for exited and suspended children.
     havekids = 0;
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc)
-        continue;
-      havekids = 1;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    {
+      if(p->parent != curproc) //check if curproc is not parent of someone
+      continue;
+      havekids = 1; //curproc is parent of someone
+      papa=p->parent;
+      zumbo_cleanup(p);
+      
       if(p->state == ZOMBIE){
+      pid = p->pid;
+      cprintf("i am zombie child of %s and my name is %s with pid %d \n", papa->name,p->name,pid);      
         // Found one.
-        pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
         freevm(p->pgdir);
@@ -294,11 +349,21 @@ wait(void)
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
+        p->suspended = 0;
         p->state = UNUSED;
-        release(&ptable.lock);
+        release(&ptable.lock); 
         return pid;
+      } 
+      
+      if(p->suspended)
+      {
+      	pid = p->pid;
+      	cprintf("i am suspended child of %s and my name is %s with pid %d \n", papa->name,p->name,pid); 
+      	release(&ptable.lock);     
+      	return pid;    
       }
     }
+    
 
     // No point waiting if we don't have any children.
     if(!havekids || curproc->killed){
@@ -310,6 +375,7 @@ wait(void)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
 }
+
 
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
@@ -332,13 +398,20 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    
+    
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
+    
+      if(p->state != RUNNABLE )       
         continue;
-
+        
+     if(p->suspended)  //not schedule suspended processes  
+      	continue;    
+   
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
+      
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
@@ -351,7 +424,7 @@ scheduler(void)
       c->proc = 0;
     }
     release(&ptable.lock);
-
+	
   }
 }
 
@@ -387,6 +460,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
+ // cprintf("yielding next process %d (%s)\n", myproc()->pid, myproc()->name);
   sched();
   release(&ptable.lock);
 }
@@ -488,6 +562,7 @@ kill(int pid)
       // Wake process from sleep if necessary.
       if(p->state == SLEEPING)
         p->state = RUNNABLE;
+        
       release(&ptable.lock);
       return 0;
     }
@@ -509,7 +584,7 @@ procdump(void)
   [SLEEPING]  "sleep ",
   [RUNNABLE]  "runble",
   [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
+  [ZOMBIE]    "zombie",
   };
   int i;
   struct proc *p;
@@ -532,3 +607,154 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+//--------------------code for control signal handling---------------
+void control_signal_handler(int sig)
+{
+
+  struct proc *p;
+  char *state;
+  static char *states[] = {
+  [UNUSED]    "unused",
+  [EMBRYO]    "embryo",
+  [SLEEPING]  "sleep ",
+  [RUNNABLE]  "runble",
+  [RUNNING]   "run   ",
+  [ZOMBIE]    "zombie",
+  };
+  
+  switch (sig) {
+  
+    case 1: 
+      cprintf("\nCtrl-C is detected by xv6\n");
+      
+      for (p = ptable.proc; p < &ptable.proc[NPROC] && p->pid !=0 ; p++) 
+      {
+      	state = states[p->state];
+      	//cprintf("Process in case1 %d\n", p->pid);
+      	
+    	if (p->pid !=1 && p->pid !=2 && p->state != ZOMBIE) 
+    	{
+    	cprintf("killing process with id and state  %d %s %s\n", p->pid, state, p->name);
+    	p->killed=1;  //mark process as killed which will be removed using exit() or wait(). 
+    	p->state=ZOMBIE;	
+      }
+      
+      if (p->state == SLEEPING) 
+    		{
+      		//cprintf("Waking up sh and init manually...\n");
+      		p->state = RUNNABLE;
+   		}
+      
+      
+      }	  
+    break;
+    
+    case 2:{
+    
+    cprintf("\nCtrl-B is detected by xv6\n");
+      
+      
+   	struct proc *curp = myproc();
+	int suspend_self = 0;
+	acquire(&ptable.lock);
+	for (p = ptable.proc; p < &ptable.proc[NPROC] && p->pid != 0; p++) {
+	
+	if (p->state == SLEEPING) 
+    		{
+      		//cprintf("Waking up sh and init manually...\n");
+      		p->state = RUNNABLE;
+   		}
+   		
+  	if (p->pid != 1 && p->pid != 2 && p->suspended==0) 
+     	{
+
+    	cprintf("Suspending pid %d (%s)\n", p->pid, p->name);
+    
+    		// If this is the current process, delay suspension
+    		if (p == curp) 
+    		{
+      		suspend_self = 1;
+      		//cprintf("Current process pid %d (%s)\n", p->pid, p->name);
+    		} 
+    		else 
+    		{
+      		p->suspended = 1;
+      		//cprintf("p->suspended value changed of pid %d (%s)\n", p->pid, p->name);
+    		}	
+  	}
+	}
+	// Suspend self
+	if (suspend_self) {
+  	curp->suspended =1;
+  	//cprintf("p->suspended value changed of current pid %d (%s)\n", curp->pid, curp->name);
+  	release(&ptable.lock);
+  	// leave cpu to schedule other processes i.e init or sh
+	}
+	break;
+    }
+  
+      
+    case 3:  
+      cprintf("\nCtrl-F is detected by xv6\n");
+      acquire(&ptable.lock);
+      struct proc *papa;
+      for (struct proc *p = ptable.proc; p < &ptable.proc[NPROC] && p->pid !=0; p++) 
+      {
+         papa=p->parent;
+         	
+   		
+    	if (p->suspended) 
+    	 cprintf("Resuming pid %d (%s) of parent %s\n", p->pid, p->name,papa->name);
+    	{
+       	p->suspended = 0;  // Resume suspended processes
+       	}
+       	
+       	if (p->state == SLEEPING) 
+    		{
+      		//cprintf("Waking up sh and init manually...\n");
+      		p->state = RUNNABLE;
+   		}
+      }
+      release(&ptable.lock);
+     break;
+      
+    case 4:
+      	cprintf("\nCtrl-G is detected by xv6\n");
+      
+	p= myproc();
+	
+	if (p->signal_handler != NULL) 
+	{
+     	cprintf("Invoking myHandler() at address: %p\n", p->signal_handler);   
+     	   
+      	/*cprintf("Before invoking signal handler:\n");
+      	cprintf("p->tf->eip = 0x%x\n", p->tf->eip);
+    	cprintf("p->tf->esp = 0x%x\n", p->tf->esp);
+    	cprintf("p->signal_handler address = 0x%x\n", (uint)p->signal_handler);*/
+  
+    	// Inject a call to the handler in user space
+    	// Save original instruction pointer
+    	p->tf->esp -= 4;
+    	*(uint*)p->tf->esp = p->tf->eip;  // push current eip
+
+    	// Redirect execution to handler
+    	p->tf->eip = (uint)p->signal_handler;     
+
+    	// Print values of eip and esp after modifying the trap frame              
+        //cprintf("After invoking myHandler()\n");
+    	} 
+    
+    	else 
+    	{
+        cprintf("No valid signal handler found\n");
+    	}          
+    break;
+      
+    default:
+    break;
+  } 
+  return; 
+}
+
+//--------------------code for control signal handling---------------

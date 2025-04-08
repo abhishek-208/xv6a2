@@ -1,3 +1,5 @@
+#include "signal.h"
+
 struct stat;
 struct rtcdate;
 
@@ -37,3 +39,5 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
+void signal(sighandler_t handler);  // New system call function for ctrl+G
+

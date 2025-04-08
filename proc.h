@@ -1,3 +1,5 @@
+#include "signal.h"
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -32,7 +34,13 @@ struct context {
   uint eip;
 };
 
-enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+//------------------control_sig_handler-------------
+int ctrl_flag;
+void control_signal_handler(int);
+
+//------------------control_sig_handler----------
+
+enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE};
 
 // Per-process state
 struct proc {
@@ -49,6 +57,8 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  sighandler_t signal_handler;
+  int suspended;   
 };
 
 // Process memory is laid out contiguously, low addresses first:
